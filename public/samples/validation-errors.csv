@@ -1,0 +1,5 @@
+name,email,certificate_filename
+Alex Santos,alex@example.com,Alex Santos.pdf
+Alex Duplicate,ALEX@example.com,Alex Santos.pdf
+Jamie Reyes,invalid-email,Jamie Reyes.pdf
+Missing Person,missing@example.com,Not Uploaded.pdf
