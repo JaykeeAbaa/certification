@@ -105,7 +105,7 @@ export async function deliver(job: LocalJob) {
       ? "SMTP outcome unknown. Check sent-mail records before any resend."
       : code
         ? `SMTP ${code}. ${transient ? "Temporary provider rejection." : "Provider rejected the message."}`
-        : "Could not prepare email. Check local certificate files and sender configuration.";
+        : `Could not prepare email${e instanceof Error && e.message ? ` (${e.message.slice(0, 160)})` : ""}. Check local certificate files and sender configuration.`;
     execute(
       "UPDATE jobs SET status=?,error=?,available_at=? WHERE id=?",
       status,
