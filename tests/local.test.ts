@@ -90,7 +90,7 @@ function seed() {
       id: crypto.randomUUID(),
       name: "Alex",
       email: "alex@example.com",
-      certificate: cert,
+      certificates: [cert],
       excluded: false,
     },
   ];

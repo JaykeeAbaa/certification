@@ -50,6 +50,8 @@ import {
   Design,
   newCampaign,
   matchCertificate,
+  matchCertificates,
+  syncCertificates,
   issues,
   renderEmail,
   csvCell,
@@ -249,15 +251,10 @@ export default function Workspace() {
         }
       } finally {
         const all = [...certificates, ...added];
-        patch({
-          recipients: campaign.recipients.map((r) => ({
-            ...r,
-            certificate: r.certificate || matchCertificate(r.name, "", all),
-          })),
-        });
+        patch({ recipients: syncCertificates(campaign.recipients, all) });
       }
       setNotice(
-        `${added.length} certificates saved on this computer. Review the matches before sending.`,
+        `${added.length} certificates saved on this computer. Matches synced automatically — review before sending.`,
       );
     });
   }
@@ -297,21 +294,25 @@ export default function Workspace() {
   }
   function importCsv() {
     patch({
-      recipients: csvRows.map((row) => ({
-        id: crypto.randomUUID(),
-        name: (row[columns.name] || "").trim(),
-        email: (row[columns.email] || "").trim(),
-        certificate: matchCertificate(
-          row[columns.name] || "",
-          row[columns.filename] || "",
-          certificates,
-        ),
-        excluded: false,
-      })),
+      recipients: csvRows.map((row) => {
+        const name = (row[columns.name] || "").trim();
+        const explicit = columns.filename
+          ? matchCertificate(name, row[columns.filename] || "", certificates)
+          : null;
+        return {
+          id: crypto.randomUUID(),
+          name,
+          email: (row[columns.email] || "").trim(),
+          certificates: explicit
+            ? [explicit]
+            : matchCertificates(name, certificates).map((f) => f.id),
+          excluded: false,
+        };
+      }),
     });
     setCsvRows([]);
     setNotice(
-      "Recipients imported. Review and correct the certificate matches.",
+      "Recipients imported and certificates matched automatically. Review before sending.",
     );
   }
   async function action(name: string) {
@@ -753,11 +754,21 @@ export default function Workspace() {
                       />
                     </label>
                     <label>
-                      Training date
+                      Training dates (from)
                       <input
                         type="date"
-                        value={campaign.date}
-                        onChange={(e) => patch({ date: e.target.value })}
+                        value={campaign.date_from}
+                        max={campaign.date_to || undefined}
+                        onChange={(e) => patch({ date_from: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Training dates (to)
+                      <input
+                        type="date"
+                        value={campaign.date_to}
+                        min={campaign.date_from || undefined}
+                        onChange={(e) => patch({ date_to: e.target.value })}
                       />
                     </label>
                     <label>
@@ -932,17 +943,15 @@ export default function Workspace() {
                         className="text-button"
                         onClick={() =>
                           patch({
-                            recipients: campaign.recipients.map((r) => ({
-                              ...r,
-                              certificate:
-                                r.certificate ||
-                                matchCertificate(r.name, "", certificates),
-                            })),
+                            recipients: syncCertificates(
+                              campaign.recipients,
+                              certificates,
+                            ),
                           })
                         }
                       >
                         <RotateCcw size={15} />
-                        Match filenames
+                        Sync matches
                       </button>
                     </div>
                     <div className="table-wrap">
@@ -1015,49 +1024,97 @@ export default function Workspace() {
                                 />
                               </td>
                               <td>
-                                <div className="certificate-select">
+                                <div className="certificate-chips">
+                                  {r.certificates.map((id) => {
+                                    const f = certificates.find(
+                                      (c) => c.id === id,
+                                    );
+                                    return (
+                                      <span key={id} className="cert-chip" title={f?.name || id}>
+                                        <button
+                                          className="icon-button"
+                                          aria-label={
+                                            "Preview certificate for " + r.name
+                                          }
+                                          onClick={() =>
+                                            window.open(
+                                              `/api/certificate?id=${id}`,
+                                              "_blank",
+                                              "noopener,noreferrer",
+                                            )
+                                          }
+                                        >
+                                          <Eye size={14} />
+                                        </button>
+                                        <span className="cert-chip-name">
+                                          {f?.name || "Missing file"}
+                                        </span>
+                                        <button
+                                          className="icon-button danger"
+                                          aria-label={`Detach ${f?.name || "certificate"} from ${r.name}`}
+                                          onClick={() =>
+                                            patch({
+                                              recipients:
+                                                campaign.recipients.map((x) =>
+                                                  x.id === r.id
+                                                    ? {
+                                                        ...x,
+                                                        certificates:
+                                                          x.certificates.filter(
+                                                            (c) => c !== id,
+                                                          ),
+                                                      }
+                                                    : x,
+                                                ),
+                                            })
+                                          }
+                                        >
+                                          <X size={14} />
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
                                   <select
-                                    aria-label={"Certificate for " + r.name}
-                                    value={r.certificate || ""}
-                                    onChange={(e) =>
+                                    aria-label={
+                                      r.certificates.length
+                                        ? "Attach another certificate to " + r.name
+                                        : "Certificate for " + r.name
+                                    }
+                                    value=""
+                                    onChange={(e) => {
+                                      if (!e.target.value) return;
                                       patch({
                                         recipients: campaign.recipients.map(
                                           (x) =>
-                                            x.id === r.id
+                                            x.id === r.id &&
+                                            !x.certificates.includes(
+                                              e.target.value,
+                                            )
                                               ? {
                                                   ...x,
-                                                  certificate:
-                                                    e.target.value || null,
+                                                  certificates: [
+                                                    ...x.certificates,
+                                                    e.target.value,
+                                                  ],
                                                 }
                                               : x,
                                         ),
-                                      })
-                                    }
+                                      });
+                                    }}
                                   >
-                                    <option value="">Select certificate</option>
-                                    {certificates.map((f) => (
-                                      <option key={f.id} value={f.id}>
-                                        {f.name}
-                                      </option>
-                                    ))}
+                                    <option value="">
+                                      {r.certificates.length
+                                        ? `Attach another (${r.certificates.length} attached)`
+                                        : "Select certificate"}
+                                    </option>
+                                    {certificates
+                                      .filter((f) => !r.certificates.includes(f.id))
+                                      .map((f) => (
+                                        <option key={f.id} value={f.id}>
+                                          {f.name}
+                                        </option>
+                                      ))}
                                   </select>
-                                  {r.certificate && (
-                                    <button
-                                      className="icon-button"
-                                      aria-label={
-                                        "Preview certificate for " + r.name
-                                      }
-                                      onClick={() =>
-                                        window.open(
-                                          `/api/certificate?id=${r.certificate}`,
-                                          "_blank",
-                                          "noopener,noreferrer",
-                                        )
-                                      }
-                                    >
-                                      <Eye size={16} />
-                                    </button>
-                                  )}
                                 </div>
                               </td>
                               <td>
@@ -1454,7 +1511,7 @@ export default function Workspace() {
                               : "All included recipients matched"}
                           </dd>
                           <dt>Attachments</dt>
-                          <dd>One signed PDF per participant</dd>
+                          <dd>All matched PDFs per participant</dd>
                           <dt>Sending pace</dt>
                           <dd>
                             Up to {sender.per_minute} emails/minute ·{" "}
@@ -1578,9 +1635,14 @@ export default function Workspace() {
                                 return [
                                   r.name,
                                   r.email,
-                                  certificates.find(
-                                    (c) => c.id === r.certificate,
-                                  )?.name || "",
+                                  r.certificates
+                                    .map(
+                                      (id) =>
+                                        certificates.find((c) => c.id === id)
+                                          ?.name || "",
+                                    )
+                                    .filter(Boolean)
+                                    .join("; "),
                                   r.excluded
                                     ? "excluded"
                                     : j?.status || "draft",

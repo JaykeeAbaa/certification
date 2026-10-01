@@ -174,15 +174,14 @@ export async function POST(req: Request) {
         audit("email.test", id);
       });
       const r = c.recipients.find((r) => !r.excluded);
-      const attachments = [];
-      if (r?.certificate) {
-        const cert = getCertificate(r.certificate, id);
-        attachments.push({
+      const attachments = (r?.certificates || []).map((certId) => {
+        const cert = getCertificate(certId, id);
+        return {
           filename: cert.name,
           content: readFileSync(certificatePath(cert.id)),
           contentType: "application/pdf",
-        });
-      }
+        };
+      });
       const smtp = await transport(sender);
       try {
         await smtp.sendMail({

@@ -23,7 +23,7 @@ Defaults are 10 attempts/minute and 400 attempts per rolling 24 hours. Adjust th
 ## Send certificates
 
 1. Create a campaign with training details.
-2. Upload signed PDFs or a ZIP containing PDFs. Files are saved on this computer immediately. Import the participant CSV and map its columns.
+2. Upload signed PDFs or a ZIP containing PDFs. Files are saved on this computer immediately. Import the participant CSV and map its columns. Certificates match automatically regardless of word order ("Cajolo, Charish" finds "Charish C. Cajolo(signed).pdf"), and every matching file attaches — so a participant with two certificates gets both.
 3. Review certificate matches. Missing matches, duplicate emails, and reused certificates block sending until resolved or excluded.
 4. Customize email colors, fonts, spacing, alignment, images, buttons, headings, text, and dividers. Save reusable templates and preview desktop/mobile layouts.
 5. Save the draft. Send a test to the configured **sender email address** to inspect the message and first included participant's attachment.

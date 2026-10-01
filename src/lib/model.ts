@@ -13,17 +13,32 @@ export const designSchema = z.object({
   spacing: z.number().min(12).max(48),
   blocks: z.array(blockSchema).max(30),
 });
-export const recipientSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().trim().max(200),
-  email: z.string().max(254),
-  certificate: z.string().uuid().nullable(),
-  excluded: z.boolean().default(false),
-});
-export const campaignSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  date: z.string().max(30),
-  organizer: z.string().trim().min(1).max(200),
+export const recipientSchema = z.preprocess(
+  (v) => {
+    // Campaigns saved before multi-certificate support hold a single `certificate` id.
+    const r = v as Record<string, unknown>;
+    if (r && !Array.isArray(r.certificates) && typeof r.certificate === "string") {
+      const { certificate: _, ...rest } = r;
+      return { ...rest, certificates: [r.certificate] };
+    }
+    return v;
+  },
+  z.object({
+    id: z.string().uuid(),
+    name: z.string().trim().max(200),
+    email: z.string().max(254),
+    certificates: z.array(z.string().uuid()).max(10).default([]),
+    excluded: z.boolean().default(false),
+  }),
+);
+export const campaignSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    date_from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be YYYY-MM-DD."),
+    date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be YYYY-MM-DD."),
+    organizer: z.string().trim().min(1).max(200),
   subject: z
     .string()
     .trim()
@@ -40,6 +55,9 @@ export const campaignSchema = z.object({
       "Recipient IDs must be unique.",
     ),
   retention_days: z.number().int().min(7).max(365),
+}).refine((c) => c.date_to >= c.date_from, {
+  message: "End date cannot be before the start date.",
+  path: ["date_to"],
 });
 export type Design = z.infer<typeof designSchema>;
 export type Recipient = z.infer<typeof recipientSchema>;
@@ -97,10 +115,12 @@ export const defaultDesign: Design = {
   ],
 };
 export function newCampaign(): Campaign {
+  const today = new Date().toISOString().slice(0, 10);
   return {
     id: crypto.randomUUID(),
     title: "Untitled training",
-    date: new Date().toISOString().slice(0, 10),
+    date_from: today,
+    date_to: today,
     organizer: "DICT Caraga",
     subject: "Your certificate for {{training_title}}",
     preheader: "Thank you for learning with DICT. Your certificate is here.",
@@ -118,6 +138,73 @@ export function normalize(value: string) {
     .replace(/\.pdf$/i, "")
     .replace(/[^a-z0-9]/g, "");
 }
+/** Tokens that carry no identity in uploaded filenames (e.g. "Name(signed)(signed).pdf"). */
+const FILENAME_NOISE = new Set(["signed"]);
+export function fileTokens(filename: string): string[] {
+  return filename
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\.pdf$/i, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(" ")
+    .map((t) => t.trim())
+    .filter((t) => t && !FILENAME_NOISE.has(t));
+}
+export function nameTokens(name: string): string[] {
+  return name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+function sameMultiset(a: string[], b: string[]): boolean {
+  if (a.length !== b.length || !a.length) return false;
+  const count = new Map<string, number>();
+  for (const t of a) count.set(t, (count.get(t) || 0) + 1);
+  for (const t of b) {
+    const n = (count.get(t) || 0) - 1;
+    if (n < 0) return false;
+    count.set(t, n);
+  }
+  return true;
+}
+function firstLastKey(tokens: string[]): string {
+  const words = tokens.filter((t) => !/^(jr|sr|ii|iii|iv|v)$/.test(t));
+  if (!words.length) return "";
+  if (words.length === 1) return words[0];
+  return `${words[0]} ${words[words.length - 1]}`;
+}
+/**
+ * Every uploaded certificate that could belong to `name`, best first:
+ * exact token-set match (any word order), then first+last-name match
+ * (middle names and initials ignored). Filename noise like "(signed)"
+ * never blocks a match.
+ */
+export function matchCertificates(
+  name: string,
+  files: Certificate[],
+): Certificate[] {
+  const tokens = nameTokens(name);
+  if (!tokens.length) return [];
+  const scored: { file: Certificate; rank: number }[] = [];
+  for (const file of files) {
+    const ft = fileTokens(file.name);
+    if (!ft.length) continue;
+    if (sameMultiset(tokens, ft)) scored.push({ file, rank: 0 });
+    else {
+      const nk = firstLastKey(tokens),
+        fk = firstLastKey(ft);
+      if (nk && nk === fk) scored.push({ file, rank: 1 });
+    }
+  }
+  return scored
+    .sort((a, b) => a.rank - b.rank)
+    .map((s) => s.file);
+}
 export function validEmail(value: string) {
   return z.email().safeParse(value.trim()).success;
 }
@@ -126,16 +213,35 @@ export function matchCertificate(
   filename: string,
   files: Certificate[],
 ) {
-  if (!filename && !normalize(name)) return null;
-  const matches = files.filter((f) =>
-    filename
-      ? f.name.toLowerCase() === filename.trim().toLowerCase()
-      : normalize(f.name) === normalize(name),
+  if (filename) {
+    const match = files.find(
+      (f) => f.name.toLowerCase() === filename.trim().toLowerCase(),
+    );
+    return match ? match.id : null;
+  }
+  if (!normalize(name)) return null;
+  const smart = matchCertificates(name, files);
+  return smart.length ? smart[0].id : null;
+}
+/** Attach every smart match; used when syncing after imports and uploads. */
+export function syncCertificates(
+  recipients: Recipient[],
+  files: Certificate[],
+): Recipient[] {
+  return recipients.map((r) =>
+    r.certificates.length
+      ? r
+      : {
+          ...r,
+          certificates: matchCertificates(r.name, files).map((f) => f.id),
+        },
   );
-  return matches.length === 1 ? matches[0].id : null;
 }
 export function issues(recipients: Recipient[]) {
   const active = recipients.filter((r) => !r.excluded);
+  const usage = new Map<string, number>();
+  for (const r of active)
+    for (const id of r.certificates) usage.set(id, (usage.get(id) || 0) + 1);
   return new Map(
     active.map((r) => [
       r.id,
@@ -145,9 +251,8 @@ export function issues(recipients: Recipient[]) {
         active.filter(
           (x) => x.email.trim().toLowerCase() === r.email.trim().toLowerCase(),
         ).length > 1 && "Duplicate email",
-        !r.certificate && "Certificate missing",
-        r.certificate &&
-          active.filter((x) => x.certificate === r.certificate).length > 1 &&
+        !r.certificates.length && "Certificate missing",
+        r.certificates.some((id) => (usage.get(id) || 0) > 1) &&
           "Certificate reused",
       ]
         .filter(Boolean)
@@ -172,9 +277,21 @@ export function escapeHtml(s: string) {
       ]!,
   );
 }
+/** Display string for a training period. Falls back to legacy single `date` rows. */
+export function trainingDates(
+  c: Pick<Campaign, "date_from" | "date_to"> & { date?: string },
+): string {
+  const from = c.date_from || c.date || "";
+  const to = c.date_to || c.date || from;
+  if (!from) return to;
+  if (!to || to === from) return from;
+  return `${from} to ${to}`;
+}
 export function personalize(
   s: string,
-  c: Pick<Campaign, "title" | "date" | "organizer">,
+  c: Pick<Campaign, "title" | "date_from" | "date_to" | "organizer"> & {
+    date?: string;
+  },
   name: string,
 ) {
   return s.replace(
@@ -183,13 +300,16 @@ export function personalize(
       ({
         name,
         training_title: c.title,
-        training_date: c.date,
+        training_date: trainingDates(c),
         organizer: c.organizer,
       })[key]!,
   );
 }
 export function renderEmail(
-  c: Pick<Campaign, "title" | "date" | "organizer" | "preheader" | "design">,
+  c: Pick<
+    Campaign,
+    "title" | "date_from" | "date_to" | "organizer" | "preheader" | "design"
+  > & { date?: string },
   name: string,
 ) {
   const d = c.design;

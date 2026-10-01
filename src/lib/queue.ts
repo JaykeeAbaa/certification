@@ -60,8 +60,15 @@ export async function deliver(job: LocalJob) {
     if (!sender) throw new Error("Sender missing.");
     const recipient = c.recipients.find((r) => r.id === job.recipient_id);
     if (!recipient || recipient.excluded) throw new Error("Recipient missing.");
-    const cert = getCertificate(recipient.certificate!, c.id),
-      content = readFileSync(certificatePath(cert.id));
+    if (!recipient.certificates.length) throw new Error("Recipient missing.");
+    const attachments = recipient.certificates.map((id) => {
+      const cert = getCertificate(id, c.id);
+      return {
+        filename: cert.name,
+        content: readFileSync(certificatePath(cert.id)),
+        contentType: "application/pdf",
+      };
+    });
     const smtp = await transport(sender);
     try {
       sending = true;
@@ -71,9 +78,7 @@ export async function deliver(job: LocalJob) {
         subject: personalize(c.subject, c, recipient.name),
         ...renderEmail(c, recipient.name),
         messageId: `<${job.id}@${sender.email.split("@")[1]}>`,
-        attachments: [
-          { filename: cert.name, content, contentType: "application/pdf" },
-        ],
+        attachments,
       });
       if (!result.accepted?.length)
         throw Object.assign(new Error("Message rejected"), {

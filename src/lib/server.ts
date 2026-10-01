@@ -84,8 +84,20 @@ export type StoredCampaign = {
   created_at: string;
 };
 export function parseCampaign(c: StoredCampaign): Campaign {
+  const data = JSON.parse(c.data);
+  // Campaigns saved before multi-certificate support hold a single `certificate` id.
+  if (Array.isArray(data.recipients)) {
+    data.recipients = data.recipients.map((r: Record<string, unknown>) => ({
+      ...r,
+      certificates: Array.isArray(r.certificates)
+        ? r.certificates
+        : typeof r.certificate === "string"
+          ? [r.certificate]
+          : [],
+    }));
+  }
   return {
-    ...JSON.parse(c.data),
+    ...data,
     id: c.id,
     status: c.status,
     created_at: c.created_at,
@@ -217,9 +229,13 @@ export function launchCampaign(id: string) {
     if (!active.length || [...issues(c.recipients).values()].some(Boolean))
       throw new Error("Resolve all recipient issues before sending.");
     for (const r of active) {
-      getCertificate(r.certificate!, id);
-      if (!existsSync(certificatePath(r.certificate!)))
-        throw new Error("A certificate file is missing from this computer.");
+      if (!r.certificates.length)
+        throw new Error("Every included recipient needs a certificate.");
+      for (const id of r.certificates) {
+        getCertificate(id, c.id);
+        if (!existsSync(certificatePath(id)))
+          throw new Error("A certificate file is missing from this computer.");
+      }
       execute(
         "INSERT OR IGNORE INTO jobs(id,campaign_id,recipient_id) VALUES(?,?,?)",
         crypto.randomUUID(),
