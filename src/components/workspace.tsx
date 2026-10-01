@@ -21,6 +21,8 @@ import {
   Trash2,
   Send,
   Save,
+  Bold,
+  Italic,
   Monitor,
   Smartphone,
   GripVertical,
@@ -42,6 +44,7 @@ import JSZip from "jszip";
 import { api, uploadCertificate } from "@/lib/browser";
 import CertificateTagger from "./certificate-tagger";
 import DataAnalysis from "./data-analysis";
+import { emailPresets } from "@/lib/presets";
 import {
   Campaign,
   Certificate,
@@ -117,6 +120,19 @@ export default function Workspace() {
   const drag = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  function wrapSelection(before: string, after: string) {
+    const el = editRef.current;
+    if (!el || !block || block.type === "divider" || block.type === "image")
+      return;
+    const { selectionStart: s, selectionEnd: e, value } = el;
+    const selected = value.slice(s, e) || "text";
+    updateBlock({ text: value.slice(0, s) + before + selected + after + value.slice(e) });
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(s + before.length, s + before.length + selected.length);
+    });
+  }
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label);
     setError("");
@@ -1316,11 +1332,34 @@ export default function Workspace() {
                       </div>
                       {block && block.type !== "divider" && (
                         <div className="block-edit">
+                          {block.type !== "image" && (
+                            <div className="format-tools" role="toolbar" aria-label="Text formatting">
+                              <button
+                                title="Bold selected text"
+                                aria-label="Bold selected text"
+                                onClick={() => wrapSelection("**", "**")}
+                              >
+                                <Bold size={15} />
+                              </button>
+                              <button
+                                title="Italicize selected text"
+                                aria-label="Italicize selected text"
+                                onClick={() => wrapSelection("*", "*")}
+                              >
+                                <Italic size={15} />
+                              </button>
+                              <small>
+                                Select text, then format. **bold** and *italic*
+                                work with {"{{name}}"} too.
+                              </small>
+                            </div>
+                          )}
                           <label>
                             {block.type === "image"
                               ? "Image alternative text"
                               : "Content"}
                             <textarea
+                              ref={editRef}
                               rows={block.type === "text" ? 7 : 3}
                               value={block.text}
                               onChange={(e) =>
@@ -1350,7 +1389,8 @@ export default function Workspace() {
                           <small>
                             Personalize with {"{{name}}"},{" "}
                             {"{{training_title}}"}, {"{{training_date}}"}, or{" "}
-                            {"{{organizer}}"}.
+                            {"{{organizer}}"}. Wrap words in **stars** for bold
+                            or *single stars* for italic.
                           </small>
                         </div>
                       )}
@@ -1777,9 +1817,21 @@ export default function Workspace() {
                   {
                     id: "default",
                     name: "The DICT milestone",
+                    blurb: "A warm, professional certificate email.",
                     design: newCampaign().design,
                   },
-                  ...templates,
+                  ...emailPresets.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    blurb: p.blurb,
+                    design: p.design,
+                  })),
+                  ...templates.map((t) => ({
+                    id: t.id,
+                    name: t.name,
+                    blurb: "Saved to your workspace.",
+                    design: t.design,
+                  })),
                 ].map((t) => (
                   <section className="panel template-card" key={t.id}>
                     <iframe
@@ -1798,11 +1850,7 @@ export default function Workspace() {
                     />
                     <div>
                       <h3>{t.name}</h3>
-                      <p>
-                        {t.id === "default"
-                          ? "A warm, professional certificate email."
-                          : "Saved to your workspace."}
-                      </p>
+                      <p>{t.blurb}</p>
                       <button
                         className="secondary"
                         onClick={() => {

@@ -1077,6 +1077,27 @@ label small {
   flex-direction: column;
   gap: 13px;
 }
+.format-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.format-tools button {
+  border: 1px solid #dee6f1;
+  background: #f9fbff;
+  color: #6581aa;
+  font-size: 12px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  min-width: 34px;
+}
+.format-tools button:hover:not(:disabled) {
+  background: #eef4ff;
+  color: var(--blue);
+}
+.format-tools small {
+  margin-left: 6px;
+}
 .block-edit > small {
   font-size: 10px;
 }

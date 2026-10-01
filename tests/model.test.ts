@@ -8,11 +8,16 @@ import {
   renderEmail,
   personalize,
   trainingDates,
+  richText,
+  plainText,
+  escapeHtml,
   safeUrl,
   csvCell,
   campaignSchema,
   recipientSchema,
+  designSchema,
 } from "../src/lib/model";
+import { emailPresets } from "../src/lib/presets";
 const files = [
   { id: "a", name: "José Santos.pdf", path: "a", size: 20 },
   { id: "b", name: "Jamie Reyes.pdf", path: "b", size: 20 },
@@ -166,5 +171,40 @@ describe("Safe email rendering", () => {
     expect(campaignSchema.safeParse(c).success).toBe(false);
     // Legacy single-date rows still render.
     expect(trainingDates({ date_from: "", date_to: "", date: "2026-09-26" })).toBe("2026-09-26");
+  });
+});
+describe("Email rich text and presets", () => {
+  it("renders **bold** and *italic* in HTML and strips them in text", () => {
+    expect(richText(escapeHtml("Dear **Alex**, well *done*!"))).toBe(
+      "Dear <strong>Alex</strong>, well <em>done</em>!",
+    );
+    expect(plainText("Dear **Alex**, well *done*!")).toBe("Dear Alex, well done!");
+    // Unbalanced markers are left alone.
+    expect(richText(escapeHtml("A * star and two"))).toBe("A * star and two");
+    expect(richText(escapeHtml("A ** star"))).toBe("A ** star");
+    // Markers never become executable HTML.
+    expect(richText(escapeHtml("**<img>**"))).toBe("<strong>&lt;img&gt;</strong>");
+  });
+  it("formats participant names and titles inside email blocks", () => {
+    const c = newCampaign();
+    c.design.blocks = [
+      { id: "x", type: "text", text: "Dear **{{name}}**, you finished *{{training_title}}*", url: "" },
+    ];
+    const output = renderEmail(c, "Alex Santos");
+    expect(output.html).toContain("<strong>Alex Santos</strong>");
+    expect(output.html).toContain("<em>");
+    expect(output.text).toContain("Dear Alex Santos,");
+    expect(output.text).not.toContain("**");
+  });
+  it("ships valid built-in presets", () => {
+    expect(emailPresets.length).toBeGreaterThanOrEqual(3);
+    const ids = new Set(emailPresets.map((p) => p.id));
+    expect(ids.size).toBe(emailPresets.length);
+    for (const preset of emailPresets) {
+      expect(designSchema.safeParse(preset.design).success).toBe(true);
+      const c = { ...newCampaign(), design: preset.design };
+      expect(campaignSchema.safeParse(c).success).toBe(true);
+      expect(renderEmail(c, "Alex").html).toContain("<table");
+    }
   });
 });

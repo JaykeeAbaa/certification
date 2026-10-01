@@ -277,6 +277,20 @@ export function escapeHtml(s: string) {
       ]!,
   );
 }
+/**
+ * Minimal rich text for email blocks. Runs on already-escaped text:
+ * `**bold**` becomes <strong>, `*italic*` becomes <em>.
+ * Unbalanced markers are left untouched.
+ */
+export function richText(escaped: string): string {
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+}
+/** Plain-text counterpart: markers are removed, never interpreted. */
+export function plainText(personalized: string): string {
+  return personalized.replace(/\*\*/g, "").replace(/(^|[^*])\*([^*]+)\*/g, "$1$2");
+}
 /** Display string for a training period. Falls back to legacy single `date` rows. */
 export function trainingDates(
   c: Pick<Campaign, "date_from" | "date_to"> & { date?: string },
@@ -315,16 +329,15 @@ export function renderEmail(
   const d = c.design;
   const html = d.blocks
     .map((b) => {
-      const text = escapeHtml(personalize(b.text, c, name)).replace(
-        /\n/g,
-        "<br>",
-      );
+      const personalized = personalize(b.text, c, name);
+      const text = richText(escapeHtml(personalized)).replace(/\n/g, "<br>");
+      const alt = escapeHtml(personalized).replace(/\n/g, " ");
       const url = escapeHtml(safeUrl(b.url));
       if (b.type === "divider")
         return '<tr><td style="padding:14px 0"><hr style="border:0;border-top:1px solid #dce2eb"></td></tr>';
       if (b.type === "image")
         return url
-          ? `<tr><td style="padding:12px 0"><img src="${url}" alt="${text}" width="220" style="max-width:100%;height:auto"></td></tr>`
+          ? `<tr><td style="padding:12px 0"><img src="${url}" alt="${alt}" width="220" style="max-width:100%;height:auto"></td></tr>`
           : "";
       if (b.type === "button")
         return url
@@ -339,7 +352,7 @@ export function renderEmail(
       .filter((b) => b.type !== "divider")
       .map(
         (b) =>
-          personalize(b.text, c, name) +
+          plainText(personalize(b.text, c, name)) +
           (safeUrl(b.url) ? "\n" + safeUrl(b.url) : ""),
       )
       .join("\n\n"),
