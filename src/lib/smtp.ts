@@ -32,9 +32,11 @@ export async function transport(s: {
     requireTLS: true,
     tls: { servername: s.host, minVersion: "TLSv1.2" },
     auth: { user: s.email, pass: decrypt(s.secret) },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    // Uploading multi-MB PDFs on a slow line takes a while; do not mistake
+    // a slow-but-working upload for a dead connection.
+    socketTimeout: 120000,
     disableFileAccess: true,
     disableUrlAccess: true,
   });
